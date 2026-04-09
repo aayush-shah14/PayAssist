@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Amex Gold",
+    "point_value": 0.02,
+    "base_rate": 1.0,
+    "rules": [
+      {
+        "type": "category_bonus",
+        "category": "dining",
+        "multiplier": 4.0,
+        "cap": null,
+        "period": null,
+        "conditions": {}
+      },
+      {
+        "type": "category_bonus",
+        "category": "grocery",
+        "multiplier": 4.0,
+        "cap": null,
+        "period": null,
+        "conditions": {}
+      }
+    ]
+  },
+  {
+    "name": "Chase Freedom",
+    "point_value": 0.015,
+    "base_rate": 1.0,
+    "rules": [
+      {
+        "type": "rotating_category",
+        "category": "dining",
+        "multiplier": 5.0,
+        "cap": 1500.0,
+        "period": "quarterly",
+        "conditions": {}
+      }
+    ]
+  },
+  {
+    "name": "Citi Double Cash",
+    "point_value": 0.01,
+    "base_rate": 2.0,
+    "rules": [
+      {
+        "type": "universal_bonus",
+        "category": null,
+        "multiplier": 2.0,
+        "cap": null,
+        "period": null,
+        "conditions": {}
+      }
+    ]
+  },
+  {
+    "name": "Bilt Mastercard",
+    "point_value": 0.02,
+    "base_rate": 1.0,
+    "rules": [
+      {
+        "type": "category_bonus",
+        "category": "rent",
+        "multiplier": 1.0,
+        "cap": null,
+        "period": "monthly",
+        "conditions": {}
+      }
+    ]
+  }
+]
