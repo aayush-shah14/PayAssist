@@ -2,7 +2,7 @@
 
 ## Aim
 
-Help choose **which card to use for a purchase** by combining **deterministic reward math** with a small **policy layer** (preferences and overrides). Raw issuer marketing text can be turned into structured rules via an **optional LLM parser**; rewards are **never** computed by the model.
+Help choose **which card to use for a purchase** by combining **deterministic reward math** with a small **policy layer** (preferences and overrides). Raw issuer marketing text can be turned into structured rules via an **optional LLM parser**; rewards are only computed by the engine, not by the LLM.
 
 ## Description
 
