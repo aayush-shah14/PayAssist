@@ -6,17 +6,79 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from openai import OpenAI
 
 from validation import ValidationError, validate_card
 
+
+def _norm_rule_cat_key(rule: dict[str, Any]) -> str:
+    c = rule.get("category")
+    if c is None:
+        return ""
+    return str(c).strip().lower()
+
+
+def _norm_rule_type_key(rule: dict[str, Any]) -> str:
+    return str(rule.get("type", "")).strip()
+
+
+def _norm_rule_conditions_nonempty(rule: dict[str, Any]) -> bool:
+    c = rule.get("conditions")
+    return isinstance(c, dict) and len(c) > 0
+
+
+def _normalize_parsed_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Merge unconditional duplicates per (category, type): keep highest multiplier.
+
+    Rules with non-empty conditions are kept separate; missing priority gets a bump
+    so they win over broad rules when the engine sorts by (priority, multiplier).
+    """
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        key = (_norm_rule_cat_key(r), _norm_rule_type_key(r))
+        groups.setdefault(key, []).append(r)
+
+    out: list[dict[str, Any]] = []
+    for (_, _), bucket in groups.items():
+        conditional = [dict(x) for x in bucket if _norm_rule_conditions_nonempty(x)]
+        unconditional = [x for x in bucket if not _norm_rule_conditions_nonempty(x)]
+
+        for r in conditional:
+            if r.get("priority") is None:
+                r["priority"] = 10
+            out.append(r)
+
+        if unconditional:
+            best = max(unconditional, key=lambda x: float(x.get("multiplier", 0)))
+            merged = dict(best)
+            if merged.get("priority") is None:
+                merged["priority"] = 0
+            out.append(merged)
+
+    return out
+
+
+def _normalize_parsed_card(card: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of card with normalized rules list."""
+    rules = card.get("rules")
+    if not isinstance(rules, list):
+        return card
+    normalized = _normalize_parsed_rules([x for x in rules if isinstance(x, dict)])
+    return {**card, "rules": normalized}
+
 SYSTEM_PROMPT = (
-    "You convert credit card marketing or terms text into a single JSON object. "
-    "Respond with JSON only. Never include code fences or commentary. "
-    "Use the exact key names requested by the user. "
-    "All multipliers must be positive numbers. "
-    "Categories must be chosen only from the allowed list."
+    "You extract ONGOING SPEND REWARD RULES from credit card marketing or terms text. "
+    "Respond with JSON only. No markdown fences or commentary. "
+    "Ignore signup bonuses, statement credits, free trials, companion passes, "
+    "one-time offers, and any benefit that is not routine earn on purchase volume. "
+    "Focus only on recurring earn rates (e.g. 3x on dining, 5% at grocery stores). "
+    "Infer higher priority for narrower rules (e.g. portal-specific > generic travel). "
+    "Categories must be from the allowed list only."
 )
 
 USER_INSTRUCTIONS = """
@@ -24,26 +86,33 @@ Extract structured credit card rewards from the text below.
 
 Return ONE JSON object with exactly these top-level keys:
 - "name" (string, official product name)
-- "point_value" (number, estimated cash value per point earned, e.g. 0.02 means 2 cents per point)
-- "base_rate" (number, default earn multiplier when no rule applies, e.g. 1.0)
+- "point_value" (number > 0, estimated cash value per point earned, e.g. 0.02)
+- "base_rate" (number >= 0, default earn multiplier when no rule applies)
 - "rules" (array of rule objects)
 
-Each rule object MUST include ALL of these keys:
+Each rule object MUST include these REQUIRED keys:
 - "type": one of "category_bonus", "rotating_category", "relationship_bonus", "universal_bonus"
-- "category": one of dining, grocery, travel, gas, rent, online, other — use null ONLY for universal_bonus
-- "multiplier": number > 0 (points or percent expressed as multiplier per $1 of eligible spend)
-- "cap": number >= 0 or null (maximum eligible spend this rule applies to per its period, if stated)
-- "period": string such as "monthly", "quarterly", "annual", or null if not stated
-- "conditions": JSON object (use empty object {{}} if none). For relationship bonuses, encode
-  requirements as key/value pairs that could be matched against transaction metadata later.
+- "category": one of dining, grocery, travel, gas, rent, online, other
+  (for "universal_bonus" use "other" as the stored category; the engine still applies it to all spend)
+- "multiplier": number > 0
 
-Mapping guidance:
-- Map merchant types to the closest allowed category; use "other" when unclear.
-- Quarterly 5% categories → rotating_category, period "quarterly".
-- Requires bank relationship → relationship_bonus with details in conditions.
-- Flat cash back on everything → universal_bonus, category null.
+OPTIONAL keys (include when applicable, otherwise omit or use null):
+- "conditions": object mapping field names to values for matching transactions.
+  Use keys like "booking_channel", "channel" (e.g. "online"), or other clear keys.
+  Example: {{"booking_channel": "chase_travel", "channel": "online"}}
+- "exclusions": array of lowercase tokens (merchant substrings or category names to block).
+  Example: ["walmart", "target"] for grocery rules that exclude big-box.
+- "cap": number >= 0 or null (max eligible spend for this rule in the cap_period, if stated)
+- "cap_period": string or null, e.g. "monthly", "quarterly", "annual"
+- "period": either null, a short string label (e.g. "quarterly"), OR an object with ISO date strings:
+  {{"start": "2026-01-01", "end": "2026-03-31"}} for calendar-bound promos
+- "priority": integer; higher = wins when multiple rules match (default 0 if omitted).
+  More specific rules (portal, merchant) should have higher priority than broad category rules.
 
-Allowed categories (case-insensitive in source text; output lowercase):
+Do NOT include: signup bonuses, credits (hotel/airline credits, DashPass, etc.),
+lounge access unless tied to a spend multiplier, or one-time offers.
+
+Allowed categories (output lowercase):
 dining, grocery, travel, gas, rent, online, other
 
 ---
@@ -56,7 +125,8 @@ SOURCE TEXT:
 
 def parse_card_benefits(file_path: str, *, model: str | None = None) -> dict:
     """
-    Read a .txt file, call the OpenAI API (temperature=0, JSON object response), validate, return card dict.
+    Read a .txt file, call the OpenAI API (temperature=0, JSON object response),
+    validate, normalize rules, re-validate, return card dict.
     """
     path = Path(file_path)
     body = path.read_text(encoding="utf-8")
@@ -86,7 +156,9 @@ def parse_card_benefits(file_path: str, *, model: str | None = None) -> dict:
     except json.JSONDecodeError as e:
         raise ValidationError(f"LLM output is not valid JSON: {e}") from e
 
-    return validate_card(data)
+    validate_card(data)
+    normalized = _normalize_parsed_card(data)
+    return validate_card(normalized)
 
 
 def sync_benefits_directory(

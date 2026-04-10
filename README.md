@@ -6,13 +6,13 @@ Help choose **which card to use for a purchase** by combining **deterministic re
 
 ## Description
 
-PayAssist is a **Python CLI** MVP. You describe a transaction (merchant, category, amount). The app loads card definitions from **`cards.json`**, finds the highest **expected dollar value** of rewards (`get_best_card`), then applies **`policy`** rules (e.g. rent → Bilt, manual score bumps). Output is a recommended card name, short reason, and estimated points / dollar value.
+PayAssist is a **Python CLI** MVP. You describe a transaction (merchant, category, amount, plus optional channel / booking channel / ISO timestamp). The app loads card definitions from **`cards.json`**, scores cards with a **rule engine** (conditions, exclusions, date windows, priorities, caps), then applies **`policy`** (e.g. rent → Bilt, score overrides). Output is a recommended card name, short reason, and estimated points / dollar value.
 
 ## Overall workflow
 
 1. **Data** — Cards live in `cards.json` (validated schema). You can edit JSON by hand or populate it from `.txt` snippets using `llm_parser.py`.
 2. **Load** — `storage.load_cards()` reads and validates JSON into `CreditCard` objects.
-3. **Score** — `engine.compute_reward` / `get_best_card` apply rules and `point_value` deterministically.
+3. **Score** — `engine.compute_reward` / `get_best_card` pick the best matching rule per card (priority, then multiplier), apply caps (optionally using `UserProfile.per_rule_spend` when `cap_period` is set), then convert points to dollars via `point_value`.
 4. **Policy** — `policy.apply_policy` may change the final recommendation (rent preference, `SCORE_OVERRIDES`, future seasonal/relationship logic).
 5. **CLI** — `main.py` prompts for a transaction and prints the final recommendation.
 
@@ -32,7 +32,7 @@ PayAssist/
 ├── policy.py         # Non-reward preferences and score overrides
 ├── storage.py        # Load/save cards.json, upsert by card name
 ├── validation.py     # Schema checks for cards and rules
-├── models.py         # Transaction, rule TypedDicts, RewardComputation
+├── models.py         # Transaction, UserProfile, rule TypedDicts, RewardComputation
 ├── cards.py          # CreditCard dataclass (runtime mirror of JSON)
 ├── cards.json        # Card catalog (name, point_value, base_rate, rules)
 ├── requirements.txt  # Python dependencies (OpenAI client for parser)
@@ -43,13 +43,13 @@ PayAssist/
 
 | File | Role | How to use |
 |------|------|------------|
-| **`main.py`** | CLI entry: prompts for merchant, category, amount; loads cards; runs engine + policy; prints recommendation. | `python3 main.py` |
-| **`llm_parser.py`** | Calls OpenAI (`temperature=0`, JSON-only) to extract structured card data from a `.txt` file or all `*.txt` in a folder; validates output; **upserts** into `cards.json` by card name. | `pip install -r requirements.txt` then set `OPENAI_API_KEY`. `python3 llm_parser.py path/to/file.txt` or `python3 llm_parser.py benefits_raw` (default dir). Optional: `--cards path/to/cards.json`, `--model gpt-4o-mini`. |
-| **`engine.py`** | `compute_reward`, `get_best_card`: match rules (category, caps, dates, conditions), apply multipliers and `point_value`. | Imported by `main.py` and `policy.py`; not run directly. |
-| **`policy.py`** | `apply_policy(best_card, transaction, cards)`: e.g. **rent** → Bilt if present; **`SCORE_OVERRIDES`** adds dollar bonus per card when re-ranking. | Edit `SCORE_OVERRIDES` / rules as needed; imported by `main.py`. |
+| **`main.py`** | CLI entry: prompts for merchant, category, amount, optional channel / booking channel / timestamp; loads cards; runs engine + policy; prints recommendation. | `python3 main.py` |
+| **`llm_parser.py`** | Calls OpenAI (`temperature=0`, JSON-only) for **ongoing earn rules only** (ignores credits/signup bonuses); validates; **normalizes** rules in-module (dedupe / priority hints); **upserts** into `cards.json`. | `pip install -r requirements.txt` then set `OPENAI_API_KEY`. `python3 llm_parser.py path/to/file.txt` or `python3 llm_parser.py benefits_raw`. Optional: `--cards`, `--model`. |
+| **`engine.py`** | `compute_reward`, `get_best_card`: filter rules by category, `period` window, legacy dates, `conditions`, `exclusions`; resolve ties by `(priority, multiplier)`; caps + optional `UserProfile`. | Imported by `main.py` and `policy.py`. |
+| **`policy.py`** | `apply_policy(..., user_profile=...)`: rent → Bilt; **`SCORE_OVERRIDES`**. | Edit `SCORE_OVERRIDES` as needed. |
 | **`storage.py`** | `load_cards`, `save_cards`, `upsert_card`; default path `cards.json` next to this file. | Imported by `main.py` and `llm_parser.py`. |
-| **`validation.py`** | `validate_card`, `validate_cards_file_payload`: allowed categories, rule types, positive multipliers, caps, etc. Raises `ValidationError` on bad data. | Used by `storage` and `llm_parser`. |
-| **`models.py`** | `Transaction`, reward rule shapes (`TypedDict`), `RewardComputation`. | Imported across the project. |
+| **`validation.py`** | `validate_card`, `validate_cards_file_payload`: required rule fields are `type`, `category`, `multiplier`; validates optional `conditions`, `exclusions`, `cap`, `cap_period`, `period` (string or `{start,end}` ISO), `priority`. | Used by `storage` and `llm_parser`. |
+| **`models.py`** | `Transaction`, `UserProfile`, rule `TypedDict`s, `RewardComputation`. | Imported across the project. |
 | **`cards.py`** | `CreditCard` dataclass built from validated JSON. | Imported by `engine`, `policy`, `storage`. |
 | **`cards.json`** | Source of truth for cards at runtime. | Edit manually or update via `llm_parser.py`. |
 | **`requirements.txt`** | Declares `openai` for the parser only; CLI + engine use the standard library otherwise. | `pip install -r requirements.txt` |

@@ -1,10 +1,15 @@
-"""Domain models for transactions and reward rule shapes."""
+"""Domain models for transactions, user spend tracking, and reward rule shapes."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, TypedDict, Union
+
+
+class RulePeriodWindow(TypedDict, total=False):
+    start: str
+    end: str
 
 
 class CategoryBonusRule(TypedDict, total=False):
@@ -12,8 +17,11 @@ class CategoryBonusRule(TypedDict, total=False):
     category: str
     multiplier: float
     cap: float | None
-    period: str | None
+    cap_period: str | None
+    period: str | RulePeriodWindow | None
     conditions: dict[str, Any]
+    exclusions: list[str]
+    priority: int
     start_date: date
     end_date: date
 
@@ -23,8 +31,11 @@ class RotatingCategoryRule(TypedDict, total=False):
     category: str
     multiplier: float
     cap: float | None
-    period: str | None
+    cap_period: str | None
+    period: str | RulePeriodWindow | None
     conditions: dict[str, Any]
+    exclusions: list[str]
+    priority: int
     start_date: date
     end_date: date
 
@@ -34,20 +45,25 @@ class RelationshipBonusRule(TypedDict, total=False):
     category: str
     multiplier: float
     cap: float | None
-    period: str | None
+    cap_period: str | None
+    period: str | RulePeriodWindow | None
     conditions: dict[str, Any]
+    exclusions: list[str]
+    priority: int
     start_date: date
     end_date: date
 
 
 class UniversalBonusRule(TypedDict, total=False):
-    """Flat earn on all purchases (common for cash-back cards)."""
-
     type: Literal["universal_bonus"]
+    category: str
     multiplier: float
     cap: float | None
-    period: str | None
+    cap_period: str | None
+    period: str | RulePeriodWindow | None
     conditions: dict[str, Any]
+    exclusions: list[str]
+    priority: int
     start_date: date
     end_date: date
 
@@ -62,10 +78,25 @@ RewardRule = Union[
 
 
 @dataclass(frozen=True)
+class UserProfile:
+    """
+    Optional spend tracking for cap_period limits.
+
+    Keys in per_rule_spend: "{card_name}#{rule_index}" -> dollars already counted
+    toward that rule's cap in the current cap_period (caller-defined window).
+    """
+
+    per_rule_spend: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Transaction:
     merchant: str
     category: str
     amount: float
+    channel: str | None = None
+    booking_channel: str | None = None
+    timestamp: str | None = None
     txn_date: date | None = None
     metadata: dict[str, Any] | None = None
 

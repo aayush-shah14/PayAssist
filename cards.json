@@ -7,18 +7,13 @@
       {
         "type": "category_bonus",
         "category": "dining",
-        "multiplier": 4.0,
-        "cap": null,
-        "period": null,
-        "conditions": {}
+        "multiplier": 4.0
       },
       {
         "type": "category_bonus",
         "category": "grocery",
         "multiplier": 4.0,
-        "cap": null,
-        "period": null,
-        "conditions": {}
+        "exclusions": ["walmart", "target"]
       }
     ]
   },
@@ -32,8 +27,9 @@
         "category": "dining",
         "multiplier": 5.0,
         "cap": 1500.0,
+        "cap_period": "quarterly",
         "period": "quarterly",
-        "conditions": {}
+        "priority": 0
       }
     ]
   },
@@ -44,11 +40,8 @@
     "rules": [
       {
         "type": "universal_bonus",
-        "category": null,
-        "multiplier": 2.0,
-        "cap": null,
-        "period": null,
-        "conditions": {}
+        "category": "other",
+        "multiplier": 2.0
       }
     ]
   },
@@ -61,9 +54,9 @@
         "type": "category_bonus",
         "category": "rent",
         "multiplier": 1.0,
-        "cap": null,
+        "cap_period": "monthly",
         "period": "monthly",
-        "conditions": {}
+        "priority": 5
       }
     ]
   }

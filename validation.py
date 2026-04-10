@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 ALLOWED_CATEGORIES = frozenset(
@@ -24,6 +25,32 @@ def _is_real_number(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
+def _normalize_cat(category: str) -> str:
+    return category.strip().lower()
+
+
+def _validate_period_value(period: Any, prefix: str) -> None:
+    if period is None:
+        return
+    if isinstance(period, dict):
+        start = period.get("start")
+        end = period.get("end")
+        if not _is_str(start) or not _is_str(end):
+            raise ValidationError(
+                f"{prefix}.period object requires string start and end (ISO dates)"
+            )
+        try:
+            date.fromisoformat(start.strip()[:10])
+            date.fromisoformat(end.strip()[:10])
+        except ValueError as e:
+            raise ValidationError(f"{prefix}.period start/end must be valid ISO dates") from e
+        return
+    if not _is_str(period):
+        raise ValidationError(
+            f"{prefix}.period must be null, a string label, or an object with start/end"
+        )
+
+
 def validate_rule(rule: Any, idx: int) -> None:
     prefix = f"rules[{idx}]"
     if not isinstance(rule, dict):
@@ -35,56 +62,65 @@ def validate_rule(rule: Any, idx: int) -> None:
             f"{prefix}.type must be one of {sorted(ALLOWED_RULE_TYPES)}"
         )
 
-    if "multiplier" not in rule:
-        raise ValidationError(f"{prefix} missing multiplier")
-    mult = rule["multiplier"]
-    if not _is_real_number(mult) or float(mult) <= 0:
-        raise ValidationError(f"{prefix}.multiplier must be a number > 0")
-
-    if "cap" not in rule:
-        raise ValidationError(f"{prefix} missing cap (use null if none)")
-    if "period" not in rule:
-        raise ValidationError(f"{prefix} missing period (use null if none)")
-
-    if rtype != "universal_bonus":
-        cat = rule.get("category")
+    if "category" not in rule:
+        raise ValidationError(f"{prefix} missing required field 'category'")
+    cat = rule["category"]
+    if rtype == "universal_bonus":
+        if not _is_str(cat):
+            raise ValidationError(f"{prefix}.category must be a string (use 'other' for flat earn)")
+        if _normalize_cat(cat) not in ALLOWED_CATEGORIES:
+            raise ValidationError(
+                f"{prefix}.category must be one of {sorted(ALLOWED_CATEGORIES)}"
+            )
+    else:
         if not _is_str(cat):
             raise ValidationError(f"{prefix}.category must be a string")
         if _normalize_cat(cat) not in ALLOWED_CATEGORIES:
             raise ValidationError(
                 f"{prefix}.category must be one of {sorted(ALLOWED_CATEGORIES)}"
             )
-    else:
-        cat = rule.get("category")
-        if cat is not None:
-            if not _is_str(cat):
-                raise ValidationError(f"{prefix}.category must be string or null")
-            if _normalize_cat(cat) not in ALLOWED_CATEGORIES:
-                raise ValidationError(f"{prefix}.category invalid for universal_bonus")
 
-    cap = rule["cap"]
-    if cap is not None and (not _is_real_number(cap) or float(cap) < 0):
-        raise ValidationError(f"{prefix}.cap must be null or a number >= 0")
+    if "multiplier" not in rule:
+        raise ValidationError(f"{prefix} missing required field 'multiplier'")
+    mult = rule["multiplier"]
+    if not _is_real_number(mult) or float(mult) <= 0:
+        raise ValidationError(f"{prefix}.multiplier must be a number > 0")
 
-    period = rule["period"]
-    if period is not None and not _is_str(period):
-        raise ValidationError(f"{prefix}.period must be null or a string")
+    if "cap" in rule and rule["cap"] is not None:
+        cap = rule["cap"]
+        if not _is_real_number(cap) or float(cap) < 0:
+            raise ValidationError(f"{prefix}.cap must be null or a number >= 0")
+
+    if "cap_period" in rule and rule["cap_period"] is not None:
+        if not _is_str(rule["cap_period"]):
+            raise ValidationError(f"{prefix}.cap_period must be null or a string")
+
+    if "period" in rule:
+        _validate_period_value(rule["period"], prefix)
+
+    if "priority" in rule and rule["priority"] is not None:
+        pr = rule["priority"]
+        if isinstance(pr, bool) or not _is_real_number(pr):
+            raise ValidationError(f"{prefix}.priority must be an integer if present")
+        if float(pr) != int(pr):
+            raise ValidationError(f"{prefix}.priority must be a whole number")
+        if int(pr) < 0:
+            raise ValidationError(f"{prefix}.priority must be non-negative")
 
     if "conditions" in rule and rule["conditions"] is not None:
         if not isinstance(rule["conditions"], dict):
             raise ValidationError(f"{prefix}.conditions must be an object or null")
 
-
-def _normalize_cat(category: str) -> str:
-    return category.strip().lower()
+    if "exclusions" in rule and rule["exclusions"] is not None:
+        ex = rule["exclusions"]
+        if not isinstance(ex, list):
+            raise ValidationError(f"{prefix}.exclusions must be an array or null")
+        for j, item in enumerate(ex):
+            if not _is_str(item):
+                raise ValidationError(f"{prefix}.exclusions[{j}] must be a string")
 
 
 def validate_card(card: Any) -> dict[str, Any]:
-    """
-    Validate a single card dict. Returns a normalized copy-safe dict (same structure).
-
-    Raises ValidationError on failure.
-    """
     if not isinstance(card, dict):
         raise ValidationError("card must be an object")
 
